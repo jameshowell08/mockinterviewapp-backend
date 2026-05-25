@@ -1,8 +1,9 @@
 fastapi
 uvicorn
+sqlalchemy
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+pydantic[email]
+pyjwt
 websockets
 httpx
-pydantic
-python-dotenv
-sqlalchemy
-passlib[bcrypt]
