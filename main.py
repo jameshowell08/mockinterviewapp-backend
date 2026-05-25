@@ -32,14 +32,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ambil key secara fleksibel tanpa mematikan aplikasi saat startup
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3.1-flash-live-preview"
+GEMINI_REST_MODEL = "gemini-3.1-flash"
+
 GEMINI_WS_URL = (
     f"wss://generativelanguage.googleapis.com/ws/"
     f"google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
     f"?key={GEMINI_API_KEY}"
 )
-GEMINI_REST_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-04-17:generateContent"
+
+GEMINI_REST_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_REST_MODEL}:generateContent"
+
+# HAPUS ATAU JANGAN GUNAKAN 'raise ValueError' DI SINI!
 
 # ──────────────────────────────────────────────
 # System instruction builder
