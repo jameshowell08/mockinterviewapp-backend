@@ -12,11 +12,15 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 from database import get_db, engine, Base
 import models
+# pyrefly: ignore [missing-import]
+from passlib.context import CryptContext
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
-load_dotenv()
+load_dotenv(override=True)
 
 app = FastAPI()
 
@@ -469,6 +473,49 @@ def get_interview_detail(interview_id: int, db: Session = Depends(get_db)):
         "created_at": interview.created_at,
         "transcripts": [{"role": t.role, "text": t.text} for t in transcripts]
     }
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    name: str
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+@app.post("/api/auth/register")
+def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == request.email).first()
+    if user:
+        if user.hashed_password:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        else:
+            # They exist via Google, let's add a password
+            user.hashed_password = pwd_context.hash(request.password)
+            user.name = request.name
+            db.commit()
+            return {"email": user.email, "name": user.name}
+
+    new_user = models.User(
+        email=request.email, 
+        name=request.name, 
+        hashed_password=pwd_context.hash(request.password)
+    )
+    db.add(new_user)
+    db.commit()
+    return {"email": new_user.email, "name": new_user.name}
+
+@app.post("/api/auth/login")
+def login_user(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == request.email).first()
+    if not user or not user.hashed_password:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    if not pwd_context.verify(request.password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+        
+    return {"email": user.email, "name": user.name}
 
 
 if __name__ == "__main__":

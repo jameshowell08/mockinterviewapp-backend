@@ -1,13 +1,14 @@
 from sqlalchemy import Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from .database import Base
+from database import Base
 
 class User(Base):
     __tablename__ = "users"
 
     email = Column(String, primary_key=True, index=True)
     name = Column(String, nullable=True)
+    hashed_password = Column(String, nullable=True)
 
     interviews = relationship("Interview", back_populates="user")
 
