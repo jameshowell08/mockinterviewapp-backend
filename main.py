@@ -168,7 +168,7 @@ async def websocket_interview(client_ws: WebSocket):
         # Connect to Gemini WebSocket
         gemini_ws = await websockets.connect(
             GEMINI_WS_URL,
-            extra_headers={"Content-Type": "application/json"},
+            additional_headers={"Content-Type": "application/json"},
         )
         print("[Gemini] WebSocket connected")
 
