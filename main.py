@@ -505,15 +505,25 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
 
 @app.post("/api/auth/login")
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == request.email).first()
+    # 1. Paksa email menjadi huruf kecil agar COCOK dengan Supabase (Menghindari bug JJLIN vs jjlin)
+    email_clean = request.email.lower()
+    
+    user = db.query(models.User).filter(models.User.email == email_clean).first()
     if not user or not user.hashed_password:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if not pwd_context.verify(request.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
-    return {"email": user.email, "name": user.name}
-
+    # PERBAIKAN: Bungkus data sesuai ekspektasi struktur NextAuth (Sertakan token dummy/asli dan objek user)
+    return {
+        "access_token": "dummy-session-token-for-now", # NextAuth butuh key ini agar bernilai true
+        "token_type": "bearer",
+        "user": {
+            "email": user.email,
+            "name": user.name or "Candidate"
+        }
+    }
 
 if __name__ == "__main__":
     import uvicorn
