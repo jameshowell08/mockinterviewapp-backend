@@ -17,9 +17,6 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# Create database tables
-Base.metadata.create_all(bind=engine)
-
 load_dotenv(override=True)
 
 app = FastAPI()
@@ -32,7 +29,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Ambil key secara fleksibel tanpa mematikan aplikasi saat startup
+# ── Startup: create DB tables safely (won't crash the app if DB is unreachable) ──
+@app.on_event("startup")
+async def startup_event():
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("[DB] Tables created/verified successfully")
+    except Exception as e:
+        print(f"[DB] Warning: Could not create tables at startup: {e}")
+
+
+# Fetch API keys without crashing if missing
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 GEMINI_MODEL = "gemini-3.1-flash-live-preview"
 GEMINI_REST_MODEL = "gemini-3.1-flash"
@@ -45,7 +52,6 @@ GEMINI_WS_URL = (
 
 GEMINI_REST_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_REST_MODEL}:generateContent"
 
-# HAPUS ATAU JANGAN GUNAKAN 'raise ValueError' DI SINI!
 
 # ──────────────────────────────────────────────
 # System instruction builder
@@ -124,7 +130,7 @@ async def websocket_interview(client_ws: WebSocket):
         return
 
     gemini_ws = None
-    transcript_log: List[dict] = []  # Collect transcriptions for summary
+    transcript_log: List[dict] = []
 
     try:
         # Wait for the config message from the client
@@ -138,7 +144,6 @@ async def websocket_interview(client_ws: WebSocket):
 
         system_instruction = build_system_instruction(job_role, difficulty, language)
 
-        # Build the Gemini setup message per official API docs
         setup_message = {
             "setup": {
                 "model": f"models/{GEMINI_MODEL}",
@@ -167,7 +172,6 @@ async def websocket_interview(client_ws: WebSocket):
         )
         print("[Gemini] WebSocket connected")
 
-        # Send setup message
         await gemini_ws.send(json.dumps(setup_message))
         print(f"[Gemini] Setup sent for model: {GEMINI_MODEL}")
 
@@ -176,11 +180,8 @@ async def websocket_interview(client_ws: WebSocket):
         setup_response = json.loads(setup_response_raw)
         print(f"[Gemini] Setup response: {json.dumps(setup_response)[:200]}")
 
-        # Notify client that session is live
         await client_ws.send_json({"type": "status", "status": "live"})
 
-        # Send a text prompt to get the interviewer to start talking
-        # Must use realtimeInput.text (not clientContent) when responseModalities is AUDIO
         greeting_msg = {
             "realtimeInput": {
                 "text": "Please start the interview. Greet me and ask your first question."
@@ -197,11 +198,9 @@ async def websocket_interview(client_ws: WebSocket):
                 while True:
                     data = await client_ws.receive_text()
                     msg = json.loads(data)
-
                     msg_type = msg.get("type", "")
 
                     if msg_type == "audio":
-                        # Forward audio chunk to Gemini
                         audio_msg = {
                             "realtimeInput": {
                                 "audio": {
@@ -213,7 +212,6 @@ async def websocket_interview(client_ws: WebSocket):
                         await gemini_ws.send(json.dumps(audio_msg))
 
                     elif msg_type == "text":
-                        # Forward text input to Gemini via realtimeInput
                         text_msg = {
                             "realtimeInput": {
                                 "text": msg.get("text", "")
@@ -239,10 +237,8 @@ async def websocket_interview(client_ws: WebSocket):
                         turn_complete = server_content.get("turnComplete", False)
                         interrupted = server_content.get("interrupted", False)
 
-                        # Handle audio + text parts
                         if model_turn and "parts" in model_turn:
                             for part in model_turn["parts"]:
-                                # Audio data (inlineData)
                                 if "inlineData" in part:
                                     inline = part["inlineData"]
                                     await client_ws.send_json({
@@ -250,14 +246,12 @@ async def websocket_interview(client_ws: WebSocket):
                                         "data": inline.get("data", ""),
                                         "mimeType": inline.get("mimeType", "audio/pcm;rate=24000")
                                     })
-                                # Text data (fallback)
                                 elif "text" in part:
                                     await client_ws.send_json({
                                         "type": "text",
                                         "text": part["text"]
                                     })
 
-                        # Input transcription (what the user said)
                         input_transcription = server_content.get("inputTranscription")
                         if input_transcription:
                             text = input_transcription.get("text", "")
@@ -271,7 +265,6 @@ async def websocket_interview(client_ws: WebSocket):
                                 if finished:
                                     transcript_log.append({"role": "user", "text": text})
 
-                        # Output transcription (what Gemini said)
                         output_transcription = server_content.get("outputTranscription")
                         if output_transcription:
                             text = output_transcription.get("text", "")
@@ -285,16 +278,13 @@ async def websocket_interview(client_ws: WebSocket):
                                 if finished:
                                     transcript_log.append({"role": "interviewer", "text": text})
 
-                        # Interruption
                         if interrupted:
                             await client_ws.send_json({"type": "interrupted"})
                             print("[Gemini] Interrupted by user")
 
-                        # Turn complete
                         if turn_complete:
                             await client_ws.send_json({"type": "turn_complete"})
 
-                    # Setup complete (shouldn't happen here but handle gracefully)
                     if "setupComplete" in response:
                         print("[Gemini] Setup complete event")
 
@@ -305,7 +295,6 @@ async def websocket_interview(client_ws: WebSocket):
             except Exception as e:
                 print(f"[gemini_to_client error] {e}")
 
-        # Run both directions concurrently
         await asyncio.gather(
             client_to_gemini(),
             gemini_to_client(),
@@ -326,7 +315,6 @@ async def websocket_interview(client_ws: WebSocket):
     finally:
         if gemini_ws and not gemini_ws.closed:
             await gemini_ws.close()
-        # Send the transcript log to the client before closing
         try:
             if transcript_log:
                 await client_ws.send_json({
@@ -362,7 +350,6 @@ async def generate_summary(request: SummaryRequest, db: Session = Depends(get_db
     if not GEMINI_API_KEY:
         return {"error": "API key not configured"}
 
-    # Build transcript text
     transcript_text = "\n".join(
         f"{'Interviewer' if t.get('role') == 'interviewer' else 'Candidate'}: {t.get('text', '')}"
         for t in request.transcript
@@ -398,19 +385,15 @@ async def generate_summary(request: SummaryRequest, db: Session = Depends(get_db
             result = resp.json()
 
         text = result["candidates"][0]["content"]["parts"][0]["text"]
-        # Parse the JSON response
         analysis = json.loads(text)
-        
-        # Save to database
+
         try:
-            # Ensure user exists
             user = db.query(models.User).filter(models.User.email == request.userEmail).first()
             if not user:
                 user = models.User(email=request.userEmail)
                 db.add(user)
                 db.commit()
-            
-            # Create Interview
+
             interview = models.Interview(
                 user_email=request.userEmail,
                 job_role=request.jobRole,
@@ -423,8 +406,7 @@ async def generate_summary(request: SummaryRequest, db: Session = Depends(get_db
             db.add(interview)
             db.commit()
             db.refresh(interview)
-            
-            # Save Transcripts
+
             for t in request.transcript:
                 line = models.TranscriptLine(
                     interview_id=interview.id,
@@ -435,7 +417,7 @@ async def generate_summary(request: SummaryRequest, db: Session = Depends(get_db
             db.commit()
         except Exception as db_err:
             print(f"[Database Error] {db_err}")
-            
+
         return analysis
 
     except Exception as e:
@@ -450,7 +432,12 @@ async def generate_summary(request: SummaryRequest, db: Session = Depends(get_db
 
 @app.get("/api/history")
 def get_history(email: str, db: Session = Depends(get_db)):
-    interviews = db.query(models.Interview).filter(models.Interview.user_email == email).order_by(models.Interview.created_at.desc()).all()
+    interviews = (
+        db.query(models.Interview)
+        .filter(models.Interview.user_email == email)
+        .order_by(models.Interview.created_at.desc())
+        .all()
+    )
     return [{
         "id": i.id,
         "job_role": i.job_role,
@@ -465,9 +452,11 @@ def get_interview_detail(interview_id: int, db: Session = Depends(get_db)):
     interview = db.query(models.Interview).filter(models.Interview.id == interview_id).first()
     if not interview:
         raise HTTPException(status_code=404, detail="Interview not found")
-        
-    transcripts = db.query(models.TranscriptLine).filter(models.TranscriptLine.interview_id == interview_id).all()
-    
+
+    transcripts = db.query(models.TranscriptLine).filter(
+        models.TranscriptLine.interview_id == interview_id
+    ).all()
+
     return {
         "id": interview.id,
         "job_role": interview.job_role,
@@ -486,9 +475,11 @@ class RegisterRequest(BaseModel):
     password: str
     name: str
 
+
 class LoginRequest(BaseModel):
     email: str
     password: str
+
 
 @app.post("/api/auth/register")
 def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
@@ -497,33 +488,34 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
         if user.hashed_password:
             raise HTTPException(status_code=400, detail="Email already registered")
         else:
-            # They exist via Google, let's add a password
             user.hashed_password = pwd_context.hash(request.password)
             user.name = request.name
             db.commit()
             return {"email": user.email, "name": user.name}
 
     new_user = models.User(
-        email=request.email, 
-        name=request.name, 
+        email=request.email,
+        name=request.name,
         hashed_password=pwd_context.hash(request.password)
     )
     db.add(new_user)
     db.commit()
     return {"email": new_user.email, "name": new_user.name}
 
+
 @app.post("/api/auth/login")
 def login_user(request: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == request.email).first()
     if not user or not user.hashed_password:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    
+
     if not pwd_context.verify(request.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
-        
+
     return {"email": user.email, "name": user.name}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
